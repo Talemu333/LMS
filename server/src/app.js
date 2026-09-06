@@ -8,6 +8,7 @@ import instructorRoutes from './routes/instructor.js';
 import assessmentRoutes from './routes/assessments.js';
 import studentRoutes from './routes/student.js';
 import coursePublishingRoutes from './routes/course-publishing.js';
+import manualRoutes from './routes/manuals.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -38,6 +39,7 @@ app.use('/api/instructor', instructorRoutes);
 app.use('/api/instructor/assessments', assessmentRoutes);
 app.use('/api/instructor', coursePublishingRoutes);
 app.use('/api/student', studentRoutes);
+app.use('/api/manuals', manualRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
