@@ -54,13 +54,16 @@ router.get('/courses/:courseId', async (req, res, next) => {
   try {
     const [courses] = await pool.query(
       `SELECT c.id, c.title, c.slug, c.description, c.level_name,
-              CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS instructor_name
+              CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS instructor_name,
+              EXISTS(SELECT 1 FROM enrollments e2 WHERE e2.course_id = c.id AND e2.student_id = ?) AS enrolled
        FROM courses c LEFT JOIN users u ON u.id = c.instructor_id
-       JOIN enrollments e ON e.course_id = c.id AND e.student_id = ?
        WHERE c.id = ? AND c.is_published = TRUE`,
       [req.user.id, req.params.courseId]
     );
-    if (!courses.length) return res.status(404).json({ success: false, message: 'Course not found or you are not enrolled' });
+    if (!courses.length) return res.status(404).json({ success: false, message: 'Course not found' });
+    const enrolled = Boolean(courses[0].enrolled);
+
+    if (!enrolled) return res.json({ success: true, course: courses[0], enrolled: false, units: [], assessments: [] });
 
     const [units] = await pool.query(
       `SELECT cu.id, cu.title, cu.description, cu.unit_order, cu.content,
@@ -70,7 +73,6 @@ router.get('/courses/:courseId', async (req, res, next) => {
        WHERE cu.course_id = ? ORDER BY cu.unit_order ASC`,
       [req.user.id, req.params.courseId]
     );
-
     const [assessments] = await pool.query(
       `SELECT a.id, a.unit_id, a.title, a.description, a.assessment_type, a.max_score, a.due_at,
               s.id AS submission_id, s.answer_text, s.score, s.feedback, s.submitted_at, s.graded_at
@@ -79,8 +81,7 @@ router.get('/courses/:courseId', async (req, res, next) => {
        WHERE a.course_id = ? ORDER BY a.created_at DESC`,
       [req.user.id, req.params.courseId]
     );
-
-    res.json({ success: true, course: courses[0], units, assessments });
+    res.json({ success: true, course: courses[0], enrolled: true, units, assessments });
   } catch (error) { next(error); }
 });
 
@@ -94,7 +95,6 @@ router.patch('/units/:unitId/progress', async (req, res, next) => {
       [req.user.id, req.params.unitId]
     );
     if (!units.length) return res.status(404).json({ success: false, message: 'Unit not found or you are not enrolled' });
-
     await pool.query(
       `INSERT INTO unit_progress (student_id, unit_id, completed, completed_at)
        VALUES (?, ?, ?, ?)
@@ -109,7 +109,6 @@ router.post('/assessments/:assessmentId/submit', async (req, res, next) => {
   try {
     const answerText = String(req.body.answerText || '').trim();
     if (!answerText) return res.status(400).json({ success: false, message: 'Answer is required' });
-
     const [assessments] = await pool.query(
       `SELECT a.id, a.due_at FROM assessments a
        JOIN enrollments e ON e.course_id = a.course_id AND e.student_id = ?
@@ -117,12 +116,8 @@ router.post('/assessments/:assessmentId/submit', async (req, res, next) => {
       [req.user.id, req.params.assessmentId]
     );
     if (!assessments.length) return res.status(404).json({ success: false, message: 'Assessment not found or you are not enrolled' });
-
     const assessment = assessments[0];
-    if (assessment.due_at && new Date(assessment.due_at) < new Date()) {
-      return res.status(400).json({ success: false, message: 'This assessment is past its due date' });
-    }
-
+    if (assessment.due_at && new Date(assessment.due_at) < new Date()) return res.status(400).json({ success: false, message: 'This assessment is past its due date' });
     await pool.query(
       `INSERT INTO assessment_submissions (assessment_id, student_id, answer_text)
        VALUES (?, ?, ?)
