@@ -90,5 +90,51 @@ function UnitsPage() {
   async function save(e) { e.preventDefault(); setError(''); setMessage(''); if (!selected) return setError('Create a level/course first.'); setSaving(true); try { await api(`/instructor/courses/${selected}/units`, { method: 'POST', body: JSON.stringify(form) }); setForm({ title: '', unitOrder: String(units.length + 2), description: '', content: '' }); setMessage('Unit saved successfully.'); await loadUnits(selected); } catch (e) { setError(e.message); } finally { setSaving(false); } }
   return <><h1 className="page-title">Select Your Units</h1><p className="muted">Add units to one of your level courses and save their description and learning content.</p>{loading ? <div className="card empty">Loading courses...</div> : courses.length === 0 ? <div className="card empty">No level course exists yet. Go to <strong>Level</strong> and create one first.</div> : <><div className="card"><div className="form-group"><label>Level / Course</label><select value={selected} onChange={e => setSelected(e.target.value)}>{courses.map(c => <option key={c.id} value={c.id}>{c.level_name} — {c.title}</option>)}</select></div><form onSubmit={save}><Field label="Unit title" placeholder="Enter the unit title" value={form.title} onChange={v => setForm({ ...form, title: v })} /><div className="form-group"><label>Unit number</label><select value={form.unitOrder} onChange={e => setForm({ ...form, unitOrder: e.target.value })}>{Array.from({ length: 20 }, (_, i) => <option key={i + 1} value={i + 1}>Unit {String(i + 1).padStart(2, '0')}</option>)}</select></div><div className="form-group"><label>Unit description</label><textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Describe what students will learn in this unit..." /></div><div className="form-group"><label>Learning content</label><textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="Add the main learning content for this unit..." /></div>{error && <div className="error-box">{error}</div>}{message && <div className="success-box">{message}</div>}<button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Unit'}</button></form></div><section className="section"><h2>Saved Units</h2>{units.length === 0 ? <div className="card empty">No units have been added to this course.</div> : <div className="cards">{units.map(unit => <div className="card" key={unit.id}><div className="muted">Unit {String(unit.unit_order).padStart(2, '0')}</div><h3>{unit.title}</h3><p>{unit.description || 'No description provided.'}</p>{unit.content && <p className="muted">{unit.content}</p>}</div>)}</div>}</section></>}</>;
 }
-function AssessmentsPage() { return <><h1 className="page-title">Assessment Methods</h1><p className="muted">Choose an assessment method to make it available to students.</p><div className="card"><div className="form-group"><label>Assessment type</label><select defaultValue="Direct Observation"><option>Direct Observation</option><option>Question and Answer</option><option>Personal Statement</option><option>Work Practice</option></select></div><button className="btn btn-primary">Save Assessment Method</button></div><section className="section"><div className="card empty">Assessment methods will be connected to the database next.</div></section></>; }
+
+function AssessmentsPage() {
+  const [courses, setCourses] = useState([]), [units, setUnits] = useState([]), [assessments, setAssessments] = useState([]);
+  const [form, setForm] = useState({ courseId: '', unitId: '', title: '', description: '', assessmentType: 'Direct Observation', maxScore: '100', dueAt: '' });
+  const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  async function load() {
+    setLoading(true);
+    try {
+      const [courseData, assessmentData] = await Promise.all([api('/instructor/courses'), api('/instructor/assessments')]);
+      setCourses(courseData.courses); setAssessments(assessmentData.assessments);
+      if (!form.courseId && courseData.courses[0]) setForm(prev => ({ ...prev, courseId: String(courseData.courses[0].id) }));
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }
+  async function loadUnits(courseId) {
+    if (!courseId) return setUnits([]);
+    try { setUnits((await api(`/instructor/courses/${courseId}/units`)).units); } catch (e) { setError(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  useEffect(() => { if (form.courseId) loadUnits(form.courseId); }, [form.courseId]);
+  async function save(e) {
+    e.preventDefault(); setError(''); setMessage(''); setSaving(true);
+    try {
+      await api('/instructor/assessments', { method: 'POST', body: JSON.stringify(form) });
+      setForm(prev => ({ ...prev, title: '', description: '', assessmentType: 'Direct Observation', maxScore: '100', dueAt: '', unitId: '' }));
+      setMessage('Assessment method saved successfully.');
+      const data = await api('/instructor/assessments'); setAssessments(data.assessments);
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  async function remove(id) {
+    if (!window.confirm('Delete this assessment method?')) return;
+    setError('');
+    try { await api(`/instructor/assessments/${id}`, { method: 'DELETE' }); setAssessments(prev => prev.filter(a => a.id !== id)); } catch (e) { setError(e.message); }
+  }
+  return <><h1 className="page-title">Assessment Methods</h1><p className="muted">Create assessment methods and attach them to a level course or specific unit.</p>
+    {loading ? <div className="card empty">Loading assessment data...</div> : courses.length === 0 ? <div className="card empty">Create a level/course first before adding an assessment.</div> : <>
+      <div className="card"><form onSubmit={save}>
+        <div className="form-group"><label>Level / Course</label><select required value={form.courseId} onChange={e => setForm({ ...form, courseId: e.target.value, unitId: '' })}>{courses.map(c => <option key={c.id} value={c.id}>{c.level_name} — {c.title}</option>)}</select></div>
+        <div className="form-group"><label>Unit <span className="muted">(optional)</span></label><select value={form.unitId} onChange={e => setForm({ ...form, unitId: e.target.value })}><option value="">All units / course level</option>{units.map(u => <option key={u.id} value={u.id}>Unit {String(u.unit_order).padStart(2, '0')} — {u.title}</option>)}</select></div>
+        <Field label="Assessment title" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Unit 01 Practical Observation" />
+        <div className="form-group"><label>Assessment type</label><select value={form.assessmentType} onChange={e => setForm({ ...form, assessmentType: e.target.value })}><option>Direct Observation</option><option>Question and Answer</option><option>Personal Statement</option><option>Work Practice</option><option>Assignment</option><option>Quiz</option></select></div>
+        <div className="two-col"><Field label="Maximum score" type="number" value={form.maxScore} onChange={v => setForm({ ...form, maxScore: v })} placeholder="100" /><div className="form-group"><label>Due date <span className="muted">(optional)</span></label><input type="datetime-local" value={form.dueAt} onChange={e => setForm({ ...form, dueAt: e.target.value })} /></div></div>
+        <div className="form-group"><label>Description <span className="muted">(optional)</span></label><textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Describe how students will be assessed..." /></div>
+        {error && <div className="error-box">{error}</div>}{message && <div className="success-box">{message}</div>}<button className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Assessment Method'}</button>
+      </form></div>
+      <section className="section"><h2>Saved Assessment Methods</h2>{assessments.length === 0 ? <div className="card empty">No assessment methods have been created.</div> : <div className="cards">{assessments.map(a => <div className="card" key={a.id}><div className="row-between"><div><div className="muted">{a.assessment_type}</div><h3>{a.title}</h3></div><button className="icon-btn" title="Delete" onClick={() => remove(a.id)}><Trash2 size={17} /></button></div><p className="muted">{a.course_title}{a.unit_title ? ` · ${a.unit_title}` : ' · Course level'}</p><p>{a.description || 'No description provided.'}</p><strong>Max score: {a.max_score}</strong>{a.due_at && <p className="muted">Due: {new Date(a.due_at).toLocaleString()}</p>}</div>)}</div>}</section>
+    </>}</>;
+}
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
