@@ -1,13 +1,19 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import 'dotenv/config';
 import { pool } from './db.js';
+import authRoutes from './routes/auth.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -18,6 +24,8 @@ app.get('/api/health', async (_req, res) => {
     res.status(500).json({ success: false, message: 'API is running but database connection failed' });
   }
 });
+
+app.use('/api/auth', authRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
