@@ -48,11 +48,11 @@ router.post('/login', async (req, res, next) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password are required' });
     const [rows] = await pool.query(
-      `SELECT u.id, u.first_name, u.last_name, u.email, u.password_hash, u.active, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.email = ? LIMIT 1`,
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.password_hash, u.is_active, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.email = ? LIMIT 1`,
       [email.trim().toLowerCase()]
     );
     const user = rows[0];
-    if (!user || !user.active || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    if (!user || !user.is_active || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ success: false, message: 'Invalid email or password' });
     setSession(res, user);
     res.json({ success: true, user: publicUser(user) });
   } catch (error) { next(error); }
@@ -60,8 +60,8 @@ router.post('/login', async (req, res, next) => {
 
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
-    const [rows] = await pool.query(`SELECT u.id, u.first_name, u.last_name, u.email, u.active, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1`, [req.user.id]);
-    if (!rows[0] || !rows[0].active) { res.clearCookie('eles_token'); return res.status(401).json({ success: false, message: 'Account is unavailable' }); }
+    const [rows] = await pool.query(`SELECT u.id, u.first_name, u.last_name, u.email, u.is_active, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1`, [req.user.id]);
+    if (!rows[0] || !rows[0].is_active) { res.clearCookie('eles_token'); return res.status(401).json({ success: false, message: 'Account is unavailable' }); }
     res.json({ success: true, user: publicUser(rows[0]) });
   } catch (error) { next(error); }
 });
