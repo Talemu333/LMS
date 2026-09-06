@@ -67,8 +67,8 @@ router.get('/:assessmentId/submissions', async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT s.id, s.assessment_id, s.student_id, s.answer_text, s.score, s.feedback,
               s.submitted_at, s.graded_at,
+              u.first_name, u.last_name, u.email,
               CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS student_name,
-              u.email AS student_email,
               a.title AS assessment_title, a.max_score
        FROM assessment_submissions s
        JOIN assessments a ON a.id = s.assessment_id
