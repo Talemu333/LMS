@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import 'dotenv/config';
 import { pool } from './db.js';
 import authRoutes from './routes/auth.js';
+import instructorRoutes from './routes/instructor.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -30,6 +31,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/instructor', instructorRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
