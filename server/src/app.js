@@ -6,6 +6,7 @@ import { pool } from './db.js';
 import authRoutes from './routes/auth.js';
 import instructorRoutes from './routes/instructor.js';
 import assessmentRoutes from './routes/assessments.js';
+import studentRoutes from './routes/student.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -34,6 +35,7 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/instructor/assessments', assessmentRoutes);
+app.use('/api/student', studentRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
