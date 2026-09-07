@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import 'dotenv/config';
 import { pool } from './db.js';
 import authRoutes from './routes/auth.js';
+import instructorSafeRoutes from './routes/instructor-safe.js';
 import instructorRoutes from './routes/instructor.js';
 import assessmentRoutes from './routes/assessments.js';
 import studentRoutes from './routes/student.js';
@@ -52,6 +53,8 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authLimiter, authRoutes);
+// Safe course/unit handlers run first so the instructor UI does not depend on unused legacy columns.
+app.use('/api/instructor', instructorSafeRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/instructor/assessments', assessmentRoutes);
 app.use('/api/instructor', coursePublishingRoutes);
@@ -62,7 +65,7 @@ app.use('/api/forum', forumRoutes);
 
 app.use((req, res) => res.status(404).json({ success: false, message: 'API endpoint not found' }));
 app.use((err, _req, res, _next) => {
-  console.error(err);
+  console.error('API ERROR:', err);
   if (err.message === 'Origin not allowed by CORS') return res.status(403).json({ success: false, message: 'Origin not allowed' });
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
