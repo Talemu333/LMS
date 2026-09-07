@@ -37,4 +37,4 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Check server modules
-        run: node --check src/app.js && node --check src/routes/auth.js && node --check src/routes/student.js && node --check src/routes/instructor.js && node --check src/routes/assessments.js && node --check src/routes/admin.js
+        run: node --check src/app.js && for file in src/middleware/*.js src/routes/*.js; do node --check "$file"; done
