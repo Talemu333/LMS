@@ -1,3 +1,70 @@
-import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';import{BookOpen,CheckCircle2,ClipboardCheck,ArrowRight,PlayCircle,Send}from'lucide-react';const API_URL=import.meta.env.VITE_API_URL||'http://localhost:5001/api';async function api(p,o={}){const r=await fetch(`${API_URL}${p}`,{credentials:'include',headers:{'Content-Type':'application/json',...(o.headers||{})},...o});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.message||'Request failed');return d}
-function StudentOverview(){const[c,setC]=useState([]),[e,setE]=useState('');useEffect(()=>{api('/student/courses').then(d=>setC(d.courses||[])).catch(x=>setE(x.message))},[]);return <div className="student-overview">{e&&<div className="error-box">{e}</div>}<div className="student-course-grid">{c.map(x=><article className="student-course-card" key={x.id}><div className="student-card-icon"><BookOpen size={20}/></div><div className="student-card-body"><span className="muted">{x.level_name}</span><h3>{x.title}</h3><p>{x.description||'Continue learning through this course.'}</p><div className="student-progress"><span>Progress</span><strong>{Number(x.progress_percent||0)}%</strong></div><div className="progress-track"><i style={{width:`${Math.min(100,Math.max(0,Number(x.progress_percent||0)))}%`}}/></div><button className="course-link" onClick={()=>{const b=[...document.querySelectorAll('.nav button')].find(b=>b.textContent.includes('My Courses'));b?.click()}} >Open course <ArrowRight size={15}/></button></div></article>)}</div></div>}
-function AssessmentEnhancement(){const main=document.querySelector('main.main');if(!main)return;const title=main.querySelector('.page-title')?.textContent?.trim();if(title!=='My Courses')return;const old=main.querySelector('.student-overview-root');if(old)return;const rootEl=document.createElement('div');rootEl.className='student-overview-root';const target=main.querySelector('.page-role');main.insertBefore(rootEl,target||null);createRoot(rootEl).render(<StudentOverview/>)}new MutationObserver(AssessmentEnhancement).observe(document.body,{childList:true,subtree:true});AssessmentEnhancement();
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BookOpen, CheckCircle2, ArrowRight } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
+
+async function api(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || 'Request failed');
+  return data;
+}
+
+function StudentOverview() {
+  const [courses, setCourses] = useState([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/student/courses')
+      .then(data => setCourses(data.courses || []))
+      .catch(err => setError(err.message));
+  }, []);
+
+  const enrolled = courses.filter(course => Boolean(course.enrolled));
+  const completed = enrolled.filter(course => Number(course.progress_percent) >= 100).length;
+  const averageProgress = enrolled.length
+    ? Math.round(enrolled.reduce((sum, course) => sum + Number(course.progress_percent || 0), 0) / enrolled.length)
+    : 0;
+
+  return (
+    <div className="student-overview">
+      {error && <div className="error-box">{error}</div>}
+      <div className="student-learning-summary">
+        <div className="student-summary-card">
+          <div className="student-summary-icon"><BookOpen size={19} /></div>
+          <div><span>Enrolled courses</span><strong>{enrolled.length}</strong></div>
+        </div>
+        <div className="student-summary-card">
+          <div className="student-summary-icon"><CheckCircle2 size={19} /></div>
+          <div><span>Completed courses</span><strong>{completed}</strong></div>
+        </div>
+        <div className="student-summary-card">
+          <div className="student-summary-icon"><ArrowRight size={19} /></div>
+          <div><span>Average progress</span><strong>{averageProgress}%</strong></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function enhance() {
+  const main = document.querySelector('main.main');
+  if (!main) return;
+  const title = main.querySelector('.page-title')?.textContent?.trim();
+  if (title !== 'My Courses') return;
+  if (main.querySelector('.student-overview-root')) return;
+
+  const rootEl = document.createElement('div');
+  rootEl.className = 'student-overview-root';
+  const target = main.querySelector('.page-role');
+  main.insertBefore(rootEl, target || null);
+  createRoot(rootEl).render(<StudentOverview />);
+}
+
+new MutationObserver(enhance).observe(document.body, { childList: true, subtree: true });
+enhance();
