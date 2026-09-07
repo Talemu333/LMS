@@ -17,10 +17,12 @@ import adminRoutes from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
-const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+const defaultOrigins = ['http://localhost:5173', 'http://localhost:5174', 'https://eles-lms.vercel.app'];
+const configuredOrigins = (process.env.CLIENT_URL || '')
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
