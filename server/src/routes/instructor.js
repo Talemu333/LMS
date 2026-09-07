@@ -9,6 +9,27 @@ function slugify(value) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         COUNT(DISTINCT c.id) AS course_count,
+         COUNT(DISTINCT u.id) AS unit_count,
+         COUNT(DISTINCT e.student_id) AS student_count,
+         COUNT(DISTINCT a.id) AS assessment_count,
+         COUNT(DISTINCT s.id) AS submission_count
+       FROM courses c
+       LEFT JOIN course_units u ON u.course_id = c.id
+       LEFT JOIN enrollments e ON e.course_id = c.id
+       LEFT JOIN assessments a ON a.course_id = c.id
+       LEFT JOIN assessment_submissions s ON s.assessment_id = a.id
+       WHERE c.instructor_id = ?`,
+      [req.user.id]
+    );
+    res.json({ success: true, stats: rows[0] });
+  } catch (error) { next(error); }
+});
+
 router.get('/courses', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -68,6 +89,26 @@ router.patch('/courses/:courseId', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.delete('/courses/:courseId', async (req, res, next) => {
+  try {
+    const [courses] = await pool.query(
+      `SELECT c.id, COUNT(DISTINCT e.student_id) AS enrolled_count
+       FROM courses c
+       LEFT JOIN enrollments e ON e.course_id = c.id
+       WHERE c.id = ? AND c.instructor_id = ?
+       GROUP BY c.id`,
+      [req.params.courseId, req.user.id]
+    );
+    if (!courses.length) return res.status(404).json({ success: false, message: 'Course not found' });
+    if (Number(courses[0].enrolled_count) > 0) {
+      return res.status(409).json({ success: false, message: 'This course has enrolled students. Unpublish it instead of deleting it.' });
+    }
+    const [result] = await pool.query('DELETE FROM courses WHERE id = ? AND instructor_id = ?', [req.params.courseId, req.user.id]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Course not found' });
+    res.json({ success: true, message: 'Course deleted successfully' });
+  } catch (error) { next(error); }
+});
+
 router.get('/courses/:courseId/units', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -123,16 +164,12 @@ router.patch('/units/:unitId', async (req, res, next) => {
     const unit = units[0];
     await connection.query('UPDATE course_units SET unit_order = ? WHERE course_id = ? AND id = ?', [-unit.id, unit.course_id, unit.id]);
     const [conflict] = await connection.query('SELECT id FROM course_units WHERE course_id = ? AND unit_order = ? AND id <> ? FOR UPDATE', [unit.course_id, unitOrder, unit.id]);
-    if (conflict.length) {
-      await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [-conflict[0].id, conflict[0].id]);
-    }
+    if (conflict.length) await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [-conflict[0].id, conflict[0].id]);
     await connection.query(
       'UPDATE course_units SET title = ?, description = ?, content = ?, unit_order = ? WHERE id = ?',
       [title, description || null, content || null, unitOrder, unit.id]
     );
-    if (conflict.length) {
-      await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [unit.unit_order, conflict[0].id]);
-    }
+    if (conflict.length) await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [unit.unit_order, conflict[0].id]);
     await connection.commit();
     const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, content FROM course_units WHERE id = ?', [unit.id]);
     res.json({ success: true, unit: rows[0] });
