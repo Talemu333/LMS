@@ -140,6 +140,18 @@ router.post('/courses/:courseId/units', async (req, res, next) => {
     if (!title || !Number.isInteger(unitOrder) || unitOrder < 1 || unitOrder > 20) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number from 1 to 20 are required' });
     if (!['Mandatory', 'Optional'].includes(status)) return res.status(400).json({ success: false, message: 'Unit status must be Mandatory or Optional' });
 
+    const [assigned] = await pool.query(
+      `SELECT u.id, c.instructor_id
+       FROM course_units u
+       JOIN courses c ON c.id = u.course_id
+       WHERE u.unit_order = ?
+       LIMIT 1`,
+      [unitOrder]
+    );
+    if (assigned.length && Number(assigned[0].instructor_id) !== Number(req.user.id)) {
+      return res.status(409).json({ success: false, message: `Unit ${unitOrder} is already assigned to another instructor` });
+    }
+
     const [result] = await pool.query(
       'INSERT INTO course_units (course_id, title, description, unit_order, status) VALUES (?, ?, ?, ?, ?)',
       [courseId, title, description || null, unitOrder, status]
@@ -173,6 +185,19 @@ router.patch('/units/:unitId', async (req, res, next) => {
     );
     if (!units.length) { await connection.rollback(); return res.status(404).json({ success: false, message: 'Unit not found' }); }
     const unit = units[0];
+
+    const [globalConflict] = await connection.query(
+      `SELECT u.id, c.instructor_id, u.course_id, u.unit_order
+       FROM course_units u
+       JOIN courses c ON c.id = u.course_id
+       WHERE u.unit_order = ? AND u.id <> ? AND c.instructor_id <> ?
+       LIMIT 1 FOR UPDATE`,
+      [unitOrder, unit.id, req.user.id]
+    );
+    if (globalConflict.length) {
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: `Unit ${unitOrder} is already assigned to another instructor` });
+    }
 
     if (unit.unit_order !== unitOrder) {
       const [conflict] = await connection.query(
