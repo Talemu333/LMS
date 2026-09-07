@@ -52,6 +52,22 @@ router.post('/courses', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.patch('/courses/:courseId', async (req, res, next) => {
+  try {
+    const title = String(req.body.title || '').trim();
+    const levelName = String(req.body.levelName || '').trim();
+    const description = String(req.body.description || '').trim();
+    if (!title || !levelName) return res.status(400).json({ success: false, message: 'Course title and level are required' });
+    const [result] = await pool.query(
+      'UPDATE courses SET title = ?, description = ?, level_name = ? WHERE id = ? AND instructor_id = ?',
+      [title, description || null, levelName, req.params.courseId, req.user.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Course not found' });
+    const [rows] = await pool.query('SELECT id, title, slug, description, level_name, is_published FROM courses WHERE id = ?', [req.params.courseId]);
+    res.json({ success: true, course: rows[0] });
+  } catch (error) { next(error); }
+});
+
 router.get('/courses/:courseId/units', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -85,6 +101,57 @@ router.post('/courses/:courseId/units', async (req, res, next) => {
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this course' });
     next(error);
   }
+});
+
+router.patch('/units/:unitId', async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const title = String(req.body.title || '').trim();
+    const description = String(req.body.description || '').trim();
+    const content = String(req.body.content || '').trim();
+    const unitOrder = Number(req.body.unitOrder);
+    if (!title || !Number.isInteger(unitOrder) || unitOrder < 1) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number are required' });
+
+    await connection.beginTransaction();
+    const [units] = await connection.query(
+      `SELECT u.id, u.course_id, u.unit_order FROM course_units u
+       JOIN courses c ON c.id = u.course_id
+       WHERE u.id = ? AND c.instructor_id = ? FOR UPDATE`,
+      [req.params.unitId, req.user.id]
+    );
+    if (!units.length) { await connection.rollback(); return res.status(404).json({ success: false, message: 'Unit not found' }); }
+    const unit = units[0];
+    await connection.query('UPDATE course_units SET unit_order = ? WHERE course_id = ? AND id = ?', [-unit.id, unit.course_id, unit.id]);
+    const [conflict] = await connection.query('SELECT id FROM course_units WHERE course_id = ? AND unit_order = ? AND id <> ? FOR UPDATE', [unit.course_id, unitOrder, unit.id]);
+    if (conflict.length) {
+      await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [-conflict[0].id, conflict[0].id]);
+    }
+    await connection.query(
+      'UPDATE course_units SET title = ?, description = ?, content = ?, unit_order = ? WHERE id = ?',
+      [title, description || null, content || null, unitOrder, unit.id]
+    );
+    if (conflict.length) {
+      await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [unit.unit_order, conflict[0].id]);
+    }
+    await connection.commit();
+    const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, content FROM course_units WHERE id = ?', [unit.id]);
+    res.json({ success: true, unit: rows[0] });
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    next(error);
+  } finally { connection.release(); }
+});
+
+router.delete('/units/:unitId', async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      `DELETE u FROM course_units u JOIN courses c ON c.id = u.course_id
+       WHERE u.id = ? AND c.instructor_id = ?`,
+      [req.params.unitId, req.user.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Unit not found' });
+    res.json({ success: true, message: 'Unit deleted successfully' });
+  } catch (error) { next(error); }
 });
 
 router.get('/courses/:courseId/students', async (req, res, next) => {
