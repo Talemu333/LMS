@@ -1,6 +1,8 @@
-const isAdmin = window.location.pathname.startsWith('/admin');
+const path = window.location.pathname;
 
-if (isAdmin) {
+if (path === '/admin/setup') {
+  import('./admin-setup.jsx');
+} else if (path.startsWith('/admin')) {
   import('./admin-clean.jsx');
 } else {
   import('./lms.jsx');
