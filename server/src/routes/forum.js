@@ -8,7 +8,7 @@ router.use(requireAuth);
 router.get('/posts', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT p.id, p.course_id, p.title, p.body, p.created_at,
+      `SELECT p.id, p.course_id, p.author_id, p.title, p.body, p.created_at,
               CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS author_name,
               c.title AS course_title, COUNT(r.id) AS reply_count
        FROM forum_posts p
