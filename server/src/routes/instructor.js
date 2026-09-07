@@ -51,9 +51,8 @@ router.get('/courses', async (req, res, next) => {
 router.post('/courses', async (req, res, next) => {
   try {
     const title = String(req.body.title || '').trim();
-    const levelName = String(req.body.levelName || '').trim();
     const description = String(req.body.description || '').trim();
-    if (!title || !levelName) return res.status(400).json({ success: false, message: 'Course title and level are required' });
+    if (!title) return res.status(400).json({ success: false, message: 'Level title is required' });
 
     const baseSlug = slugify(title) || `course-${Date.now()}`;
     let slug = baseSlug;
@@ -65,8 +64,9 @@ router.post('/courses', async (req, res, next) => {
     }
 
     const [result] = await pool.query(
-      'INSERT INTO courses (title, slug, description, level_name, instructor_id) VALUES (?, ?, ?, ?, ?)',
-      [title, slug, description || null, levelName, req.user.id]
+      `INSERT INTO courses (title, slug, description, level_name, instructor_id, is_published)
+       VALUES (?, ?, ?, ?, ?, TRUE)`,
+      [title, slug, description || null, title, req.user.id]
     );
     const [rows] = await pool.query('SELECT id, title, slug, description, level_name, is_published FROM courses WHERE id = ?', [result.insertId]);
     res.status(201).json({ success: true, course: rows[0] });
@@ -78,14 +78,15 @@ router.patch('/courses/:courseId', async (req, res, next) => {
     const courseId = Number(req.params.courseId);
     if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Invalid course ID' });
     const title = String(req.body.title || '').trim();
-    const levelName = String(req.body.levelName || '').trim();
     const description = String(req.body.description || '').trim();
-    if (!title || !levelName) return res.status(400).json({ success: false, message: 'Course title and level are required' });
+    if (!title) return res.status(400).json({ success: false, message: 'Level title is required' });
     const [result] = await pool.query(
-      'UPDATE courses SET title = ?, description = ?, level_name = ? WHERE id = ? AND instructor_id = ?',
-      [title, description || null, levelName, courseId, req.user.id]
+      `UPDATE courses
+       SET title = ?, description = ?, level_name = ?, is_published = TRUE
+       WHERE id = ? AND instructor_id = ?`,
+      [title, description || null, title, courseId, req.user.id]
     );
-    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Course not found' });
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Level not found' });
     const [rows] = await pool.query('SELECT id, title, slug, description, level_name, is_published FROM courses WHERE id = ?', [courseId]);
     res.json({ success: true, course: rows[0] });
   } catch (error) { next(error); }
@@ -116,7 +117,7 @@ router.get('/courses/:courseId/units', async (req, res, next) => {
     const courseId = Number(req.params.courseId);
     if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Invalid course ID' });
     const [rows] = await pool.query(
-      `SELECT u.id, u.course_id, u.title, u.description, u.unit_order, u.content
+      `SELECT u.id, u.course_id, u.title, u.description, u.unit_order, u.status, u.content
        FROM course_units u JOIN courses c ON c.id = u.course_id
        WHERE u.course_id = ? AND c.instructor_id = ?
        ORDER BY u.unit_order ASC`,
@@ -131,21 +132,22 @@ router.post('/courses/:courseId/units', async (req, res, next) => {
     const courseId = Number(req.params.courseId);
     const title = String(req.body.title || '').trim();
     const description = String(req.body.description || '').trim();
-    const content = String(req.body.content || '').trim();
+    const status = String(req.body.status || 'Mandatory').trim();
     const unitOrder = Number(req.body.unitOrder);
     if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Invalid course ID' });
     const [courses] = await pool.query('SELECT id FROM courses WHERE id = ? AND instructor_id = ?', [courseId, req.user.id]);
     if (!courses.length) return res.status(404).json({ success: false, message: 'Course not found' });
-    if (!title || !Number.isInteger(unitOrder) || unitOrder < 1 || unitOrder > 1000000) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number are required' });
+    if (!title || !Number.isInteger(unitOrder) || unitOrder < 1 || unitOrder > 20) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number from 1 to 20 are required' });
+    if (!['Mandatory', 'Optional'].includes(status)) return res.status(400).json({ success: false, message: 'Unit status must be Mandatory or Optional' });
 
     const [result] = await pool.query(
-      'INSERT INTO course_units (course_id, title, description, unit_order, content) VALUES (?, ?, ?, ?, ?)',
-      [courseId, title, description || null, unitOrder, content || null]
+      'INSERT INTO course_units (course_id, title, description, unit_order, status) VALUES (?, ?, ?, ?, ?)',
+      [courseId, title, description || null, unitOrder, status]
     );
-    const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, content FROM course_units WHERE id = ?', [result.insertId]);
+    const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, status, content FROM course_units WHERE id = ?', [result.insertId]);
     res.status(201).json({ success: true, unit: rows[0] });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this course' });
+    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this level' });
     next(error);
   }
 });
@@ -156,10 +158,11 @@ router.patch('/units/:unitId', async (req, res, next) => {
     const unitId = Number(req.params.unitId);
     const title = String(req.body.title || '').trim();
     const description = String(req.body.description || '').trim();
-    const content = String(req.body.content || '').trim();
+    const status = String(req.body.status || 'Mandatory').trim();
     const unitOrder = Number(req.body.unitOrder);
     if (!Number.isInteger(unitId) || unitId < 1) return res.status(400).json({ success: false, message: 'Invalid unit ID' });
-    if (!title || !Number.isInteger(unitOrder) || unitOrder < 1 || unitOrder > 1000000) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number are required' });
+    if (!title || !Number.isInteger(unitOrder) || unitOrder < 1 || unitOrder > 20) return res.status(400).json({ success: false, message: 'Unit title and a valid unit number from 1 to 20 are required' });
+    if (!['Mandatory', 'Optional'].includes(status)) return res.status(400).json({ success: false, message: 'Unit status must be Mandatory or Optional' });
 
     await connection.beginTransaction();
     const [units] = await connection.query(
@@ -184,23 +187,23 @@ router.patch('/units/:unitId', async (req, res, next) => {
       await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [tempUnitOrder, unit.id]);
       if (conflict.length) await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [tempConflictOrder, conflict[0].id]);
       await connection.query(
-        'UPDATE course_units SET title = ?, description = ?, content = ?, unit_order = ? WHERE id = ?',
-        [title, description || null, content || null, unitOrder, unit.id]
+        'UPDATE course_units SET title = ?, description = ?, status = ?, unit_order = ? WHERE id = ?',
+        [title, description || null, status, unitOrder, unit.id]
       );
       if (conflict.length) await connection.query('UPDATE course_units SET unit_order = ? WHERE id = ?', [unit.unit_order, conflict[0].id]);
     } else {
       await connection.query(
-        'UPDATE course_units SET title = ?, description = ?, content = ? WHERE id = ?',
-        [title, description || null, content || null, unit.id]
+        'UPDATE course_units SET title = ?, description = ?, status = ? WHERE id = ?',
+        [title, description || null, status, unit.id]
       );
     }
 
     await connection.commit();
-    const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, content FROM course_units WHERE id = ?', [unit.id]);
+    const [rows] = await pool.query('SELECT id, course_id, title, description, unit_order, status, content FROM course_units WHERE id = ?', [unit.id]);
     res.json({ success: true, unit: rows[0] });
   } catch (error) {
     await connection.rollback().catch(() => {});
-    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this course' });
+    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this level' });
     next(error);
   } finally { connection.release(); }
 });
