@@ -22,8 +22,14 @@ function databaseError(res, error, fallback = 'Unable to complete the assessment
   });
   if (error?.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ success: false, message: 'The assessments table is missing from the connected database. Run the current LMS schema against the database.' });
   if (error?.code === 'ER_BAD_FIELD_ERROR') return res.status(503).json({ success: false, message: 'The assessments table does not match the current LMS schema. Re-run the current schema against the database.' });
-  if (error?.code === 'ER_NO_REFERENCED_ROW_2') return res.status(409).json({ success: false, message: 'The selected level/course is no longer available. Refresh the page and try again.' });
+  if (error?.code === 'ER_NO_REFERENCED_ROW_2') return res.status(409).json({ success: false, message: 'The selected level/course or unit is no longer available. Refresh the page and try again.' });
   return res.status(500).json({ success: false, message: fallback });
+}
+
+function parseOptionalUnitId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : NaN;
 }
 
 router.get('/', async (req, res) => {
@@ -47,15 +53,34 @@ router.post('/', async (req, res) => {
   try {
     const rawType = String(req.body.assessmentType || '').trim();
     const assessmentType = NORMALIZE[rawType] || rawType;
+    const title = String(req.body.title || '').trim();
+    const description = String(req.body.description || '').trim();
+    const courseId = Number(req.body.courseId);
+    const unitId = parseOptionalUnitId(req.body.unitId);
+    const maxScore = Number(req.body.maxScore);
+    const dueAt = req.body.dueAt ? String(req.body.dueAt).trim() : null;
+
     if (!ASSESSMENT_TYPES.includes(assessmentType)) return res.status(400).json({ success: false, message: 'Select a valid assessment type.' });
+    if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Select a valid level/course.' });
+    if (Number.isNaN(unitId)) return res.status(400).json({ success: false, message: 'Select a valid unit.' });
+    if (!title) return res.status(400).json({ success: false, message: 'Assessment title is required.' });
+    if (!Number.isFinite(maxScore) || maxScore <= 0 || maxScore > 999999.99) return res.status(400).json({ success: false, message: 'Maximum score must be greater than 0.' });
+    if (dueAt && Number.isNaN(Date.parse(dueAt))) return res.status(400).json({ success: false, message: 'Enter a valid due date.' });
 
     const [courses] = await pool.query(
-      `SELECT id FROM courses WHERE instructor_id = ? ORDER BY created_at ASC LIMIT 1`,
-      [req.user.id]
+      'SELECT id FROM courses WHERE id = ? AND instructor_id = ? LIMIT 1',
+      [courseId, req.user.id]
     );
-    if (!courses.length) return res.status(400).json({ success: false, message: 'Create a level before adding an assessment method.' });
+    if (!courses.length) return res.status(404).json({ success: false, message: 'Course not found or you do not have access to it.' });
 
-    const courseId = courses[0].id;
+    if (unitId !== null) {
+      const [units] = await pool.query(
+        'SELECT id FROM course_units WHERE id = ? AND course_id = ? LIMIT 1',
+        [unitId, courseId]
+      );
+      if (!units.length) return res.status(400).json({ success: false, message: 'The selected unit does not belong to the selected course.' });
+    }
+
     const [existing] = await pool.query(
       `SELECT a.id, a.course_id, a.unit_id, a.title, a.description,
               a.assessment_type, a.max_score, a.due_at,
@@ -63,16 +88,19 @@ router.post('/', async (req, res) => {
        FROM assessments a
        JOIN courses c ON c.id = a.course_id
        LEFT JOIN course_units u ON u.id = a.unit_id
-       WHERE a.course_id = ? AND a.unit_id IS NULL AND a.assessment_type = ? AND c.instructor_id = ?
+       WHERE a.course_id = ?
+         AND ((a.unit_id = ?) OR (a.unit_id IS NULL AND ? IS NULL))
+         AND a.assessment_type = ?
+         AND c.instructor_id = ?
        LIMIT 1`,
-      [courseId, assessmentType, req.user.id]
+      [courseId, unitId, unitId, assessmentType, req.user.id]
     );
     if (existing.length) return res.json({ success: true, assessment: existing[0], alreadyExists: true });
 
     const [result] = await pool.query(
-      `INSERT INTO assessments (course_id, unit_id, title, description, assessment_type, max_score)
-       VALUES (?, NULL, ?, NULL, ?, 100)`,
-      [courseId, assessmentType, assessmentType]
+      `INSERT INTO assessments (course_id, unit_id, title, description, assessment_type, max_score, due_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [courseId, unitId, title, description || null, assessmentType, maxScore, dueAt]
     );
 
     const [rows] = await pool.query(
