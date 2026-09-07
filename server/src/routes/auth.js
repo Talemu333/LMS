@@ -21,32 +21,59 @@ function setSession(res, user) {
   res.cookie('eles_token', token, cookieOptions());
 }
 
+async function createUser({ firstName, lastName, email, password, role }) {
+  if (!firstName || !lastName || !email || !password) throw Object.assign(new Error('All required fields must be provided'), { status: 400 });
+  if (password.length < 8) throw Object.assign(new Error('Password must be at least 8 characters'), { status: 400 });
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const existing = await pool.query('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
+  if (existing[0].length) throw Object.assign(new Error('An account with that email already exists'), { status: 409 });
+
+  const [roleRows] = await pool.query('SELECT id FROM roles WHERE name = ?', [role]);
+  if (!roleRows[0]) throw Object.assign(new Error('Account role is not configured'), { status: 500 });
+
+  const first = firstName.trim();
+  const last = lastName.trim();
+  if (!first || !last) throw Object.assign(new Error('First name and last name are required'), { status: 400 });
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const [result] = await pool.query(
+    'INSERT INTO users (role_id, first_name, last_name, email, password_hash) VALUES (?, ?, ?, ?, ?)',
+    [roleRows[0].id, first, last, normalizedEmail, passwordHash]
+  );
+
+  return { id: result.insertId, first_name: first, last_name: last, email: normalizedEmail, role_name: role };
+}
+
 router.post('/register', async (req, res, next) => {
   try {
     const { firstName, lastName, email, password, role = 'student' } = req.body;
-    if (!firstName || !lastName || !email || !password) return res.status(400).json({ success: false, message: 'All required fields must be provided' });
-    if (password.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     if (!['student', 'instructor'].includes(role)) return res.status(403).json({ success: false, message: 'Invalid account type' });
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const existing = await pool.query('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
-    if (existing[0].length) return res.status(409).json({ success: false, message: 'An account with that email already exists' });
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const [roleRows] = await pool.query('SELECT id FROM roles WHERE name = ?', [role]);
-    if (!roleRows[0]) return res.status(500).json({ success: false, message: 'Account role is not configured' });
-
-    const first = firstName.trim();
-    const last = lastName.trim();
-    if (!first || !last) return res.status(400).json({ success: false, message: 'First name and last name are required' });
-    const [result] = await pool.query(
-      'INSERT INTO users (role_id, first_name, last_name, email, password_hash) VALUES (?, ?, ?, ?, ?)',
-      [roleRows[0].id, first, last, normalizedEmail, passwordHash]
-    );
-
-    const user = { id: result.insertId, first_name: first, last_name: last, email: normalizedEmail, role_name: role };
+    const user = await createUser({ firstName, lastName, email, password, role });
     setSession(res, user);
     res.status(201).json({ success: true, user: publicUser(user) });
+  } catch (error) { next(error); }
+});
+
+// Creates the first administrator only. Requires a server-side bootstrap key and is permanently closed once an admin exists.
+router.post('/bootstrap-admin', async (req, res, next) => {
+  try {
+    const setupKey = process.env.ADMIN_SETUP_KEY;
+    if (!setupKey || setupKey.length < 16 || req.get('x-admin-setup-key') !== setupKey) {
+      return res.status(403).json({ success: false, message: 'Invalid administrator setup key' });
+    }
+
+    const [adminRows] = await pool.query(
+      `SELECT COUNT(*) AS count FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'admin'`
+    );
+    if (Number(adminRows[0].count) > 0) {
+      return res.status(409).json({ success: false, message: 'Administrator setup is already complete' });
+    }
+
+    const { firstName, lastName, email, password } = req.body;
+    const user = await createUser({ firstName, lastName, email, password, role: 'admin' });
+    setSession(res, user);
+    res.status(201).json({ success: true, user: publicUser(user), message: 'Administrator account created successfully' });
   } catch (error) { next(error); }
 });
 
