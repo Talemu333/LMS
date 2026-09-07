@@ -13,7 +13,20 @@ const NORMALIZE = {
   'Work Practice': 'Work practice'
 };
 
-router.get('/', async (req, res, next) => {
+function databaseError(res, error, fallback = 'Unable to complete the assessment method request.') {
+  console.error('ASSESSMENT API ERROR:', {
+    code: error?.code,
+    errno: error?.errno,
+    sqlState: error?.sqlState,
+    message: error?.message
+  });
+  if (error?.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ success: false, message: 'The assessments table is missing from the connected database. Run the current LMS schema against the database.' });
+  if (error?.code === 'ER_BAD_FIELD_ERROR') return res.status(503).json({ success: false, message: 'The assessments table does not match the current LMS schema. Re-run the current schema against the database.' });
+  if (error?.code === 'ER_NO_REFERENCED_ROW_2') return res.status(409).json({ success: false, message: 'The selected level/course is no longer available. Refresh the page and try again.' });
+  return res.status(500).json({ success: false, message: fallback });
+}
+
+router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT a.id, a.course_id, a.unit_id, a.title, a.description,
@@ -25,31 +38,57 @@ router.get('/', async (req, res, next) => {
        ORDER BY a.created_at DESC`, [req.user.id]
     );
     res.json({ success: true, assessments: rows });
-  } catch (error) { next(error); }
+  } catch (error) {
+    databaseError(res, error, 'Unable to load assessment methods.');
+  }
 });
 
-router.post('/', async (req, res, next) => {
+router.post('/', async (req, res) => {
   try {
     const rawType = String(req.body.assessmentType || '').trim();
     const assessmentType = NORMALIZE[rawType] || rawType;
-    if (!ASSESSMENT_TYPES.includes(assessmentType)) return res.status(400).json({ success: false, message: 'Select a valid assessment type' });
+    if (!ASSESSMENT_TYPES.includes(assessmentType)) return res.status(400).json({ success: false, message: 'Select a valid assessment type.' });
 
-    const [courses] = await pool.query(`SELECT id FROM courses WHERE instructor_id = ? ORDER BY created_at ASC LIMIT 1`, [req.user.id]);
-    if (!courses.length) return res.status(400).json({ success: false, message: 'Create a level before adding an assessment method' });
+    const [courses] = await pool.query(
+      `SELECT id FROM courses WHERE instructor_id = ? ORDER BY created_at ASC LIMIT 1`,
+      [req.user.id]
+    );
+    if (!courses.length) return res.status(400).json({ success: false, message: 'Create a level before adding an assessment method.' });
+
+    const courseId = courses[0].id;
+    const [existing] = await pool.query(
+      `SELECT a.id, a.course_id, a.unit_id, a.title, a.description,
+              a.assessment_type, a.max_score, a.due_at,
+              c.title AS course_title, u.title AS unit_title
+       FROM assessments a
+       JOIN courses c ON c.id = a.course_id
+       LEFT JOIN course_units u ON u.id = a.unit_id
+       WHERE a.course_id = ? AND a.unit_id IS NULL AND a.assessment_type = ? AND c.instructor_id = ?
+       LIMIT 1`,
+      [courseId, assessmentType, req.user.id]
+    );
+    if (existing.length) return res.json({ success: true, assessment: existing[0], alreadyExists: true });
 
     const [result] = await pool.query(
       `INSERT INTO assessments (course_id, unit_id, title, description, assessment_type, max_score)
-       VALUES (?, NULL, ?, NULL, ?, 100)`, [courses[0].id, assessmentType, assessmentType]
+       VALUES (?, NULL, ?, NULL, ?, 100)`,
+      [courseId, assessmentType, assessmentType]
     );
+
     const [rows] = await pool.query(
-      `SELECT a.id, a.course_id, a.unit_id, a.title, a.description, a.assessment_type,
-              a.max_score, a.due_at, c.title AS course_title, u.title AS unit_title
-       FROM assessments a JOIN courses c ON c.id = a.course_id
+      `SELECT a.id, a.course_id, a.unit_id, a.title, a.description,
+              a.assessment_type, a.max_score, a.due_at,
+              c.title AS course_title, u.title AS unit_title
+       FROM assessments a
+       JOIN courses c ON c.id = a.course_id
        LEFT JOIN course_units u ON u.id = a.unit_id
-       WHERE a.id = ? AND c.instructor_id = ?`, [result.insertId, req.user.id]
+       WHERE a.id = ? AND c.instructor_id = ?`,
+      [result.insertId, req.user.id]
     );
     res.status(201).json({ success: true, assessment: rows[0] });
-  } catch (error) { next(error); }
+  } catch (error) {
+    databaseError(res, error, 'Unable to save the assessment method.');
+  }
 });
 
 router.get('/:assessmentId/submissions', async (req, res, next) => {
