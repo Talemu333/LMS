@@ -13,15 +13,11 @@ import coursePublishingRoutes from './routes/course-publishing.js';
 import manualRoutes from './routes/manuals.js';
 import announcementRoutes from './routes/announcements.js';
 import forumRoutes from './routes/forum.js';
-import adminRoutes from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
 const defaultOrigins = ['http://localhost:5173', 'http://localhost:5174', 'https://eles-lms.vercel.app'];
-const configuredOrigins = (process.env.CLIENT_URL || '')
-  .split(',')
-  .map(origin => origin.trim())
-  .filter(Boolean);
+const configuredOrigins = (process.env.CLIENT_URL || '').split(',').map(origin => origin.trim()).filter(Boolean);
 const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
 app.disable('x-powered-by');
@@ -51,11 +47,7 @@ app.get('/api/health', async (_req, res) => {
     res.json({ success: true, message: 'ELES LMS API is running', database: 'connected' });
   } catch (error) {
     console.error('DATABASE ERROR:', error);
-    res.status(500).json({
-      success: false,
-      message: 'API is running but database connection failed',
-      error: process.env.NODE_ENV === 'production' ? undefined : error.message
-    });
+    res.status(500).json({ success: false, message: 'API is running but database connection failed', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 });
 
@@ -67,31 +59,18 @@ app.use('/api/student', studentRoutes);
 app.use('/api/manuals', manualRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/forum', forumRoutes);
-app.use('/api/admin', adminRoutes);
 
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'API endpoint not found' });
-});
-
+app.use((req, res) => res.status(404).json({ success: false, message: 'API endpoint not found' }));
 app.use((err, _req, res, _next) => {
   console.error(err);
-  if (err.message === 'Origin not allowed by CORS') {
-    return res.status(403).json({ success: false, message: 'Origin not allowed' });
-  }
+  if (err.message === 'Origin not allowed by CORS') return res.status(403).json({ success: false, message: 'Origin not allowed' });
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
-const server = app.listen(port, () => {
-  console.log(`ELES LMS API running on http://localhost:${port}`);
-});
-
+const server = app.listen(port, () => console.log(`ELES LMS API running on http://localhost:${port}`));
 async function shutdown(signal) {
   console.log(`${signal} received. Shutting down gracefully...`);
-  server.close(async () => {
-    await pool.end().catch(() => {});
-    process.exit(0);
-  });
+  server.close(async () => { await pool.end().catch(() => {}); process.exit(0); });
 }
-
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
