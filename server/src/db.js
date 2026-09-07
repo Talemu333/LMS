@@ -7,6 +7,9 @@ if (process.env.NODE_ENV === 'production') {
   if (missing.length) throw new Error(`Missing required database environment variables: ${missing.join(', ')}`);
 }
 
+const sslEnabled = process.env.DB_SSL === 'true' || process.env.NODE_ENV === 'production';
+const sslCa = process.env.DB_SSL_CA?.replace(/\\n/g, '\n');
+
 export const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
@@ -16,5 +19,8 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
   queueLimit: 0,
-  enableKeepAlive: true
+  enableKeepAlive: true,
+  ...(sslEnabled
+    ? { ssl: sslCa ? { ca: sslCa, rejectUnauthorized: true } : { rejectUnauthorized: false } }
+    : {})
 });
