@@ -20,9 +20,7 @@ router.get('/', async (req, res, next) => {
       [req.user.id]
     );
     res.json({ success: true, assessments: rows });
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 });
 
 router.post('/', async (req, res, next) => {
@@ -31,26 +29,17 @@ router.post('/', async (req, res, next) => {
     if (!ASSESSMENT_TYPES.includes(assessmentType)) {
       return res.status(400).json({ success: false, message: 'Select a valid assessment type' });
     }
-
     const [courses] = await pool.query(
-      `SELECT id, title FROM courses
-       WHERE instructor_id = ?
-       ORDER BY created_at ASC
-       LIMIT 1`,
+      `SELECT id, title FROM courses WHERE instructor_id = ? ORDER BY created_at ASC LIMIT 1`,
       [req.user.id]
     );
-    if (!courses.length) {
-      return res.status(400).json({ success: false, message: 'Create a level before adding an assessment method' });
-    }
-
+    if (!courses.length) return res.status(400).json({ success: false, message: 'Create a level before adding an assessment method' });
     const course = courses[0];
     const [result] = await pool.query(
-      `INSERT INTO assessments
-       (course_id, unit_id, title, description, assessment_type, max_score)
+      `INSERT INTO assessments (course_id, unit_id, title, description, assessment_type, max_score)
        VALUES (?, NULL, ?, NULL, ?, 100)`,
       [course.id, assessmentType, assessmentType]
     );
-
     const [rows] = await pool.query(
       `SELECT a.id, a.course_id, a.unit_id, a.title, a.description,
               a.assessment_type, a.max_score, a.due_at,
@@ -61,27 +50,20 @@ router.post('/', async (req, res, next) => {
        WHERE a.id = ? AND c.instructor_id = ?`,
       [result.insertId, req.user.id]
     );
-
     res.status(201).json({ success: true, assessment: rows[0] });
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 });
 
 router.get('/:assessmentId/submissions', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT s.id, s.assessment_id, s.student_id, s.answer_text, s.score, s.feedback,
-              s.submitted_at, s.graded_at,
-              u.first_name, u.last_name, u.email,
+              s.submitted_at, s.graded_at, u.first_name, u.last_name, u.email,
               CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS student_name,
               a.title AS assessment_title, a.max_score
-       FROM assessment_submissions s
-       JOIN assessments a ON a.id = s.assessment_id
-       JOIN courses c ON c.id = a.course_id
-       JOIN users u ON u.id = s.student_id
-       WHERE s.assessment_id = ? AND c.instructor_id = ?
-       ORDER BY s.submitted_at DESC`,
+       FROM assessment_submissions s JOIN assessments a ON a.id = s.assessment_id
+       JOIN courses c ON c.id = a.course_id JOIN users u ON u.id = s.student_id
+       WHERE s.assessment_id = ? AND c.instructor_id = ? ORDER BY s.submitted_at DESC`,
       [req.params.assessmentId, req.user.id]
     );
     res.json({ success: true, submissions: rows });
@@ -93,25 +75,17 @@ router.patch('/submissions/:submissionId/grade', async (req, res, next) => {
     const score = Number(req.body.score);
     const feedback = String(req.body.feedback || '').trim();
     if (!Number.isFinite(score) || score < 0) return res.status(400).json({ success: false, message: 'Enter a valid score' });
-
     const [rows] = await pool.query(
-      `SELECT s.id, a.max_score
-       FROM assessment_submissions s
-       JOIN assessments a ON a.id = s.assessment_id
-       JOIN courses c ON c.id = a.course_id
+      `SELECT s.id, a.max_score FROM assessment_submissions s
+       JOIN assessments a ON a.id = s.assessment_id JOIN courses c ON c.id = a.course_id
        WHERE s.id = ? AND c.instructor_id = ? LIMIT 1`,
       [req.params.submissionId, req.user.id]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'Submission not found' });
     if (score > Number(rows[0].max_score)) return res.status(400).json({ success: false, message: `Score cannot exceed ${rows[0].max_score}` });
-
-    await pool.query(
-      `UPDATE assessment_submissions SET score = ?, feedback = ?, graded_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [score, feedback || null, req.params.submissionId]
-    );
+    await pool.query(`UPDATE assessment_submissions SET score = ?, feedback = ?, graded_at = CURRENT_TIMESTAMP WHERE id = ?`, [score, feedback || null, req.params.submissionId]);
     const [updated] = await pool.query(
-      `SELECT s.id, s.assessment_id, s.student_id, s.answer_text, s.score, s.feedback,
-              s.submitted_at, s.graded_at, a.max_score
+      `SELECT s.id, s.assessment_id, s.student_id, s.answer_text, s.score, s.feedback, s.submitted_at, s.graded_at, a.max_score
        FROM assessment_submissions s JOIN assessments a ON a.id = s.assessment_id WHERE s.id = ?`,
       [req.params.submissionId]
     );
@@ -124,15 +98,11 @@ router.delete('/:assessmentId', async (req, res, next) => {
   try {
     await connection.beginTransaction();
     const [rows] = await connection.query(
-      `SELECT a.id FROM assessments a
-       JOIN courses c ON c.id = a.course_id
+      `SELECT a.id FROM assessments a JOIN courses c ON c.id = a.course_id
        WHERE a.id = ? AND c.instructor_id = ? FOR UPDATE`,
       [req.params.assessmentId, req.user.id]
     );
-    if (!rows.length) {
-      await connection.rollback();
-      return res.status(404).json({ success: false, message: 'Assessment not found' });
-    }
+    if (!rows.length) { await connection.rollback(); return res.status(404).json({ success: false, message: 'Assessment not found' }); }
     await connection.query('DELETE FROM assessment_submissions WHERE assessment_id = ?', [req.params.assessmentId]);
     await connection.query('DELETE FROM assessments WHERE id = ?', [req.params.assessmentId]);
     await connection.commit();
@@ -140,9 +110,7 @@ router.delete('/:assessmentId', async (req, res, next) => {
   } catch (error) {
     await connection.rollback().catch(() => {});
     next(error);
-  } finally {
-    connection.release();
-  }
+  } finally { connection.release(); }
 });
 
 export default router;
