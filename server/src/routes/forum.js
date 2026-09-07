@@ -92,7 +92,7 @@ router.post('/posts/:postId/replies', async (req, res, next) => {
     const [posts] = await pool.query('SELECT id, course_id FROM forum_posts WHERE id = ?', [req.params.postId]);
     if (!posts.length) return res.status(404).json({ success: false, message: 'Forum post not found' });
     if (!(await canAccessCourse(posts[0].course_id, req.user))) return res.status(403).json({ success: false, message: 'You do not have access to this forum topic' });
-    const [result] = await pool.query('INSERT INTO forum_replies (post_id, author_id, body) VALUES (?, ?, ?)', [req.user.id, req.params.postId, body]);
+    const [result] = await pool.query('INSERT INTO forum_replies (post_id, author_id, body) VALUES (?, ?, ?)', [req.params.postId, req.user.id, body]);
     res.status(201).json({ success: true, replyId: result.insertId });
   } catch (error) { next(error); }
 });
