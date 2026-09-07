@@ -26,12 +26,19 @@ router.get('/courses', async (req, res, next) => {
               CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS instructor_name,
               EXISTS(SELECT 1 FROM enrollments e WHERE e.course_id = c.id AND e.student_id = ?) AS enrolled,
               (SELECT COUNT(*) FROM course_units cu WHERE cu.course_id = c.id) AS unit_count,
-              (SELECT COUNT(*) FROM course_units cu JOIN unit_progress up ON up.unit_id = cu.id AND up.student_id = ? AND up.completed = TRUE WHERE cu.course_id = c.id) AS completed_units
+              (SELECT COUNT(*) FROM course_units cu JOIN unit_progress up ON up.unit_id = cu.id AND up.student_id = ? AND up.completed = TRUE WHERE cu.course_id = c.id) AS completed_units,
+              CASE
+                WHEN (SELECT COUNT(*) FROM course_units cu WHERE cu.course_id = c.id) = 0 THEN 0
+                ELSE ROUND(
+                  100 * (SELECT COUNT(*) FROM course_units cu JOIN unit_progress up ON up.unit_id = cu.id AND up.student_id = ? AND up.completed = TRUE WHERE cu.course_id = c.id)
+                  / (SELECT COUNT(*) FROM course_units cu WHERE cu.course_id = c.id), 0
+                )
+              END AS progress_percent
        FROM courses c
        LEFT JOIN users u ON u.id = c.instructor_id
        WHERE c.is_published = TRUE
        ORDER BY c.created_at DESC`,
-      [req.user.id, req.user.id]
+      [req.user.id, req.user.id, req.user.id]
     );
     res.json({ success: true, courses: rows });
   } catch (error) { next(error); }
