@@ -11,6 +11,7 @@ import coursePublishingRoutes from './routes/course-publishing.js';
 import manualRoutes from './routes/manuals.js';
 import announcementRoutes from './routes/announcements.js';
 import forumRoutes from './routes/forum.js';
+import adminRoutes from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -29,5 +30,6 @@ app.use('/api/student', studentRoutes);
 app.use('/api/manuals', manualRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/forum', forumRoutes);
+app.use('/api/admin', adminRoutes);
 app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ success: false, message: 'Internal server error' }); });
 app.listen(port, () => console.log(`ELES LMS API running on http://localhost:${port}`));
