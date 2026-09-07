@@ -13,9 +13,11 @@ router.get('/courses', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT c.id, c.title, c.slug, c.description, c.level_name, c.is_published,
-              COUNT(u.id) AS unit_count
+              COUNT(DISTINCT u.id) AS unit_count,
+              COUNT(DISTINCT e.student_id) AS enrolled_count
        FROM courses c
        LEFT JOIN course_units u ON u.course_id = c.id
+       LEFT JOIN enrollments e ON e.course_id = c.id
        WHERE c.instructor_id = ?
        GROUP BY c.id
        ORDER BY c.created_at DESC`,
@@ -83,6 +85,31 @@ router.post('/courses/:courseId/units', async (req, res, next) => {
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ success: false, message: 'That unit number already exists for this course' });
     next(error);
   }
+});
+
+router.get('/courses/:courseId/students', async (req, res, next) => {
+  try {
+    const [course] = await pool.query(
+      'SELECT id, title, level_name, is_published FROM courses WHERE id = ? AND instructor_id = ? LIMIT 1',
+      [req.params.courseId, req.user.id]
+    );
+    if (!course.length) return res.status(404).json({ success: false, message: 'Course not found' });
+
+    const [students] = await pool.query(
+      `SELECT u.id, u.first_name, u.last_name, u.email, e.enrolled_at,
+              COUNT(DISTINCT up.id) AS completed_units
+       FROM enrollments e
+       JOIN users u ON u.id = e.student_id
+       LEFT JOIN course_units cu ON cu.course_id = e.course_id
+       LEFT JOIN unit_progress up ON up.unit_id = cu.id AND up.student_id = u.id AND up.completed = TRUE
+       WHERE e.course_id = ?
+       GROUP BY u.id, e.enrolled_at
+       ORDER BY e.enrolled_at DESC`,
+      [req.params.courseId]
+    );
+
+    res.json({ success: true, course: course[0], students });
+  } catch (error) { next(error); }
 });
 
 export default router;
