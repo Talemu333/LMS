@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import 'dotenv/config';
 import { pool } from './db.js';
 import authRoutes from './routes/auth.js';
@@ -15,14 +17,47 @@ import adminRoutes from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
-app.use(express.json());
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(helmet());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin not allowed by CORS'));
+  },
+  credentials: true
+}));
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
-app.get('/api/health', async (_req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ success: true, message: 'ELES LMS API is running', database: 'connected' }); }
-  catch (error) { console.error('DATABASE ERROR:', error); res.status(500).json({ success: false, message: 'API is running but database connection failed', error: process.env.NODE_ENV === 'production' ? undefined : error.message }); }
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many authentication requests. Please try again later.' }
 });
-app.use('/api/auth', authRoutes);
+
+app.get('/api/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ success: true, message: 'ELES LMS API is running', database: 'connected' });
+  } catch (error) {
+    console.error('DATABASE ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: 'API is running but database connection failed',
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message
+    });
+  }
+});
+
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/instructor', instructorRoutes);
 app.use('/api/instructor/assessments', assessmentRoutes);
 app.use('/api/instructor', coursePublishingRoutes);
@@ -31,5 +66,30 @@ app.use('/api/manuals', manualRoutes);
 app.use('/api/announcements', announcementRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/admin', adminRoutes);
-app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ success: false, message: 'Internal server error' }); });
-app.listen(port, () => console.log(`ELES LMS API running on http://localhost:${port}`));
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'API endpoint not found' });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  if (err.message === 'Origin not allowed by CORS') {
+    return res.status(403).json({ success: false, message: 'Origin not allowed' });
+  }
+  res.status(500).json({ success: false, message: 'Internal server error' });
+});
+
+const server = app.listen(port, () => {
+  console.log(`ELES LMS API running on http://localhost:${port}`);
+});
+
+async function shutdown(signal) {
+  console.log(`${signal} received. Shutting down gracefully...`);
+  server.close(async () => {
+    await pool.end().catch(() => {});
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
