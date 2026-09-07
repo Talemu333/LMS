@@ -127,16 +127,32 @@ router.patch('/submissions/:submissionId/grade', async (req, res, next) => {
 });
 
 router.delete('/:assessmentId', async (req, res, next) => {
+  const connection = await pool.getConnection();
   try {
-    const [result] = await pool.query(
-      `DELETE a FROM assessments a
+    await connection.beginTransaction();
+    const [assessments] = await connection.query(
+      `SELECT a.id
+       FROM assessments a
        JOIN courses c ON c.id = a.course_id
-       WHERE a.id = ? AND c.instructor_id = ?`,
+       WHERE a.id = ? AND c.instructor_id = ?
+       FOR UPDATE`,
       [req.params.assessmentId, req.user.id]
     );
-    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Assessment not found' });
+    if (!assessments.length) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Assessment not found' });
+    }
+
+    await connection.query('DELETE FROM assessment_submissions WHERE assessment_id = ?', [req.params.assessmentId]);
+    await connection.query('DELETE FROM assessments WHERE id = ?', [req.params.assessmentId]);
+    await connection.commit();
     res.json({ success: true, message: 'Assessment deleted' });
-  } catch (error) { next(error); }
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    next(error);
+  } finally {
+    connection.release();
+  }
 });
 
 export default router;
