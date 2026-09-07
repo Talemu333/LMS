@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-this-secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (process.env.NODE_ENV === 'production' && (!JWT_SECRET || JWT_SECRET.length < 32)) {
+  throw new Error('JWT_SECRET must be set to at least 32 characters in production');
+}
 
 export function requireAuth(req, res, next) {
   const token = req.cookies?.eles_token;
@@ -10,7 +13,7 @@ export function requireAuth(req, res, next) {
   }
 
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = jwt.verify(token, JWT_SECRET || 'dev-only-change-this-secret');
     next();
   } catch {
     return res.status(401).json({ success: false, message: 'Invalid or expired session' });
