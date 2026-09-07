@@ -37,10 +37,17 @@ router.get('/users', async (_req, res, next) => {
 
 router.patch('/users/:userId/status', async (req, res, next) => {
   try {
-    if (Number(req.params.userId) === Number(req.user.id)) return res.status(400).json({ success: false, message: 'You cannot deactivate your own admin account' });
+    const targetId = Number(req.params.userId);
+    if (!Number.isInteger(targetId) || targetId < 1) return res.status(400).json({ success: false, message: 'Invalid user ID' });
+    if (targetId === Number(req.user.id)) return res.status(400).json({ success: false, message: 'You cannot deactivate your own admin account' });
     const isActive = req.body.isActive === true;
-    const [result] = await pool.query('UPDATE users SET is_active = ? WHERE id = ?', [isActive, req.params.userId]);
-    if (!result.affectedRows) return res.status(404).json({ success: false, message: 'User not found' });
+    const [target] = await pool.query(
+      `SELECT u.id, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = ? LIMIT 1`,
+      [targetId]
+    );
+    if (!target.length) return res.status(404).json({ success: false, message: 'User not found' });
+    if (target[0].role_name === 'admin') return res.status(403).json({ success: false, message: 'Administrator accounts cannot be changed from this screen' });
+    await pool.query('UPDATE users SET is_active = ? WHERE id = ?', [isActive, targetId]);
     res.json({ success: true, isActive });
   } catch (error) { next(error); }
 });
@@ -50,13 +57,10 @@ router.get('/courses', async (_req, res, next) => {
     const [rows] = await pool.query(`
       SELECT c.id, c.title, c.slug, c.level_name, c.is_published, c.created_at,
              CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS instructor_name,
-             COUNT(DISTINCT e.student_id) AS enrolled_count,
-             COUNT(DISTINCT cu.id) AS unit_count
+             (SELECT COUNT(DISTINCT e.student_id) FROM enrollments e WHERE e.course_id = c.id) AS enrolled_count,
+             (SELECT COUNT(*) FROM course_units cu WHERE cu.course_id = c.id) AS unit_count
       FROM courses c
       LEFT JOIN users u ON u.id = c.instructor_id
-      LEFT JOIN enrollments e ON e.course_id = c.id
-      LEFT JOIN course_units cu ON cu.course_id = c.id
-      GROUP BY c.id
       ORDER BY c.created_at DESC
     `);
     res.json({ success: true, courses: rows });
@@ -65,8 +69,10 @@ router.get('/courses', async (_req, res, next) => {
 
 router.patch('/courses/:courseId/publish', async (req, res, next) => {
   try {
+    const courseId = Number(req.params.courseId);
+    if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Invalid course ID' });
     const published = req.body.published === true;
-    const [result] = await pool.query('UPDATE courses SET is_published = ? WHERE id = ?', [published, req.params.courseId]);
+    const [result] = await pool.query('UPDATE courses SET is_published = ? WHERE id = ?', [published, courseId]);
     if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Course not found' });
     res.json({ success: true, published });
   } catch (error) { next(error); }
@@ -95,20 +101,14 @@ router.get('/reports/courses', async (_req, res, next) => {
     const [rows] = await pool.query(`
       SELECT c.id, c.title, c.level_name,
              CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS instructor_name,
-             COUNT(DISTINCT e.student_id) AS enrolled_count,
-             COUNT(DISTINCT cu.id) AS unit_count,
-             COUNT(DISTINCT CASE WHEN up.completed = TRUE THEN CONCAT(up.student_id, '-', up.unit_id) END) AS completed_units,
-             COUNT(DISTINCT a.id) AS assessment_count,
-             COUNT(DISTINCT s.id) AS submission_count,
-             COUNT(DISTINCT CASE WHEN s.graded_at IS NOT NULL THEN s.id END) AS graded_submission_count
+             (SELECT COUNT(DISTINCT e.student_id) FROM enrollments e WHERE e.course_id = c.id) AS enrolled_count,
+             (SELECT COUNT(*) FROM course_units cu WHERE cu.course_id = c.id) AS unit_count,
+             (SELECT COUNT(*) FROM unit_progress up JOIN course_units cu2 ON cu2.id = up.unit_id WHERE cu2.course_id = c.id AND up.completed = TRUE) AS completed_units,
+             (SELECT COUNT(*) FROM assessments a WHERE a.course_id = c.id) AS assessment_count,
+             (SELECT COUNT(*) FROM assessment_submissions s JOIN assessments a2 ON a2.id = s.assessment_id WHERE a2.course_id = c.id) AS submission_count,
+             (SELECT COUNT(*) FROM assessment_submissions s JOIN assessments a3 ON a3.id = s.assessment_id WHERE a3.course_id = c.id AND s.graded_at IS NOT NULL) AS graded_submission_count
       FROM courses c
       LEFT JOIN users u ON u.id = c.instructor_id
-      LEFT JOIN enrollments e ON e.course_id = c.id
-      LEFT JOIN course_units cu ON cu.course_id = c.id
-      LEFT JOIN unit_progress up ON up.unit_id = cu.id
-      LEFT JOIN assessments a ON a.course_id = c.id
-      LEFT JOIN assessment_submissions s ON s.assessment_id = a.id
-      GROUP BY c.id
       ORDER BY enrolled_count DESC, c.title ASC
     `);
     res.json({ success: true, reports: rows });
@@ -119,17 +119,13 @@ router.get('/reports/students', async (_req, res, next) => {
   try {
     const [rows] = await pool.query(`
       SELECT u.id, u.first_name, u.last_name, u.email,
-             COUNT(DISTINCT e.course_id) AS enrolled_courses,
-             COUNT(DISTINCT CASE WHEN up.completed = TRUE THEN up.unit_id END) AS completed_units,
-             COUNT(DISTINCT s.id) AS submissions,
-             COUNT(DISTINCT CASE WHEN s.graded_at IS NOT NULL THEN s.id END) AS graded_submissions,
-             ROUND(AVG(s.score), 2) AS average_score
+             (SELECT COUNT(*) FROM enrollments e WHERE e.student_id = u.id) AS enrolled_courses,
+             (SELECT COUNT(DISTINCT up.unit_id) FROM unit_progress up WHERE up.student_id = u.id AND up.completed = TRUE) AS completed_units,
+             (SELECT COUNT(*) FROM assessment_submissions s WHERE s.student_id = u.id) AS submissions,
+             (SELECT COUNT(*) FROM assessment_submissions s WHERE s.student_id = u.id AND s.graded_at IS NOT NULL) AS graded_submissions,
+             (SELECT ROUND(AVG(s.score), 2) FROM assessment_submissions s WHERE s.student_id = u.id AND s.score IS NOT NULL) AS average_score
       FROM users u
       JOIN roles r ON r.id = u.role_id AND r.name = 'student'
-      LEFT JOIN enrollments e ON e.student_id = u.id
-      LEFT JOIN unit_progress up ON up.student_id = u.id
-      LEFT JOIN assessment_submissions s ON s.student_id = u.id
-      GROUP BY u.id
       ORDER BY u.created_at DESC
     `);
     res.json({ success: true, reports: rows });
@@ -138,22 +134,21 @@ router.get('/reports/students', async (_req, res, next) => {
 
 router.get('/courses/:courseId/students', async (req, res, next) => {
   try {
+    const courseId = Number(req.params.courseId);
+    if (!Number.isInteger(courseId) || courseId < 1) return res.status(400).json({ success: false, message: 'Invalid course ID' });
+    const [course] = await pool.query('SELECT id FROM courses WHERE id = ? LIMIT 1', [courseId]);
+    if (!course.length) return res.status(404).json({ success: false, message: 'Course not found' });
     const [rows] = await pool.query(`
       SELECT u.id, u.first_name, u.last_name, u.email, e.enrolled_at,
-             COUNT(DISTINCT CASE WHEN up.completed = TRUE THEN up.unit_id END) AS completed_units,
-             COUNT(DISTINCT cu.id) AS total_units,
-             COUNT(DISTINCT s.id) AS submissions,
-             ROUND(AVG(s.score), 2) AS average_score
+             (SELECT COUNT(DISTINCT up.unit_id) FROM unit_progress up JOIN course_units cu2 ON cu2.id = up.unit_id WHERE up.student_id = u.id AND cu2.course_id = ? AND up.completed = TRUE) AS completed_units,
+             (SELECT COUNT(*) FROM course_units cu3 WHERE cu3.course_id = ?) AS total_units,
+             (SELECT COUNT(*) FROM assessment_submissions s JOIN assessments a2 ON a2.id = s.assessment_id WHERE s.student_id = u.id AND a2.course_id = ?) AS submissions,
+             (SELECT ROUND(AVG(s.score), 2) FROM assessment_submissions s JOIN assessments a3 ON a3.id = s.assessment_id WHERE s.student_id = u.id AND a3.course_id = ? AND s.score IS NOT NULL) AS average_score
       FROM enrollments e
       JOIN users u ON u.id = e.student_id
-      LEFT JOIN course_units cu ON cu.course_id = e.course_id
-      LEFT JOIN unit_progress up ON up.student_id = u.id AND up.unit_id = cu.id
-      LEFT JOIN assessments a ON a.course_id = e.course_id
-      LEFT JOIN assessment_submissions s ON s.assessment_id = a.id AND s.student_id = u.id
       WHERE e.course_id = ?
-      GROUP BY u.id, e.enrolled_at
       ORDER BY e.enrolled_at DESC
-    `, [req.params.courseId]);
+    `, [courseId, courseId, courseId, courseId, courseId]);
     res.json({ success: true, students: rows });
   } catch (error) { next(error); }
 });
