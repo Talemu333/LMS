@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BookOpen, CheckCircle2, ArrowRight } from 'lucide-react';
+import './studentLearning.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
