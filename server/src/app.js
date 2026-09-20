@@ -14,6 +14,7 @@ import coursePublishingRoutes from './routes/course-publishing.js';
 import manualRoutes from './routes/manuals.js';
 import announcementRoutes from './routes/announcements.js';
 import forumRoutes from './routes/forum.js';
+import adminRoutes from './routes/admin.js';
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -53,6 +54,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/admin', adminRoutes);
 // Safe course/unit handlers run first so the instructor UI does not depend on unused legacy columns.
 app.use('/api/instructor', instructorSafeRoutes);
 app.use('/api/instructor', instructorRoutes);
